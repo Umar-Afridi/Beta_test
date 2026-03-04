@@ -774,34 +774,31 @@
 .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
-}/* مائک کے گرد بلبلے */
-@keyframes rippleWave {
-    0% {
-        transform: translate(-50%, -50%) scale(0.8);
-        opacity: 1;
-    }
-    50% {
-        transform: translate(-50%, -50%) scale(1.2);
-        opacity: 0.7;
-    }
-    100% {
-        transform: translate(-50%, -50%) scale(0.8);
-        opacity: 1;
-    }
+}/* مائک کے گرد بلبلے (درست اور صاف انیمیشن) */
+.visual-root {
+    position: relative !important;
+    overflow: visible !important;
 }
 
-@keyframes innerPulse {
-    0% {
-        transform: translate(-50%, -50%) scale(1);
-        opacity: 0.8;
-    }
-    100% {
-        transform: translate(-50%, -50%) scale(1.3);
-        opacity: 0.4;
-    }
+.visual-root .mic-ripple {
+    position: absolute !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    border-radius: 50% !important;
+    border: 2px solid #22c55e !important;
+    box-shadow: 0 0 15px #22c55e, inset 0 0 10px #22c55e !important;
+    animation: pulseRing 1.2s ease-out infinite !important;
+    z-index: 5 !important; /* یہ DP کے پیچھے رہے گا تاکہ DP صاف نظر آئے */
+    pointer-events: none !important;
+    background: transparent !important;
 }
 
-/* جب کوئی بول رہا ہو تو مائک کا رنگ بدلیں */
+@keyframes pulseRing {
+    0% { width: 100%; height: 100%; opacity: 1; border-width: 3px; }
+    100% { width: 140%; height: 140%; opacity: 0; border-width: 1px; }
+}
+
 .seat-occupied .fa-microphone {
     color: #22c55e !important;
     animation: micGlow 1s infinite alternate;
@@ -811,47 +808,6 @@
     0% { filter: drop-shadow(0 0 5px #22c55e); }
     100% { filter: drop-shadow(0 0 15px #22c55e); }
 }
-/* visual-root کو ریلیٹیو رکھنے کے لیے */
-.visual-root {
-    position: relative !important;
-    overflow: visible !important;
-}
-
-/* بلبلے صرف visual-root میں رہیں */
-.visual-root .mic-ripple,
-.visual-root .mic-ripple-inner {
-    position: absolute !important;
-    border-radius: 50% !important;
-    pointer-events: none !important;
-}
-
-/* انیمیشن - یہ پہلے سے ہے تو نہ بھی ڈالیں تو چلے گا */
-@keyframes rippleWave {
-    0% {
-        transform: translate(-50%, -50%) scale(0.8);
-        opacity: 1;
-    }
-    50% {
-        transform: translate(-50%, -50%) scale(1.2);
-        opacity: 0.7;
-    }
-    100% {
-        transform: translate(-50%, -50%) scale(0.8);
-        opacity: 1;
-    }
-}
-
-@keyframes innerPulse {
-    0% {
-        transform: translate(-50%, -50%) scale(1);
-        opacity: 0.8;
-    }
-    100% {
-        transform: translate(-50%, -50%) scale(1.3);
-        opacity: 0.4;
-    }
-}
-</style>
     </style>
 </head>
 <body>
@@ -2120,12 +2076,32 @@
                     await update(ref(db, `users/${currentUser.uid}`), { coins: currentCoins }); 
                 } 
                 else if (type === 'vip') { 
-                    await update(ref(db, `users/${currentUser.uid}/unlockedVIPs`), { [val]: true }); 
+                    let days = 7; 
+                    let iconPath = './green_vip.png';
+                    let vipName = 'VIP Green'; // خوبصورت نام
+
+                    if (lvl === 20) { days = 7; iconPath = './green_vip.png'; vipName = 'VIP Green'; }
+                    else if (lvl === 30) { days = 30; iconPath = './yellow_vip.png'; vipName = 'VIP Yellow'; } 
+                    else if (lvl === 50) { days = 14; iconPath = './pink_vip.png'; vipName = 'VIP Pink'; }
+                    else if (lvl === 70 || lvl === 100) { days = 30; iconPath = './colorful_vip.png'; vipName = 'VIP Colorful'; }
+                    
+                    let expiryTime = Date.now() + (days * 24 * 60 * 60 * 1000);
+                    let uniqueId = 'vip_' + lvl + '_' + Date.now();
+                    
+                    await update(ref(db, `users/${currentUser.uid}/unlockedFrames/${uniqueId}`), {
+                        name: vipName, // صرف نام سیو ہو گا
+                        img: val, 
+                        icon: iconPath, 
+                        isVipName: true,
+                        purchasedAt: Date.now(),
+                        expiry: expiryTime,
+                        status: 'unused'
+                    }); 
                 }
                 
-                await update(ref(db, `users/${currentUser.uid}/claimedLevelRewards`), { [lvl]: true });
+                await update(ref(db, `users/${currentUser.uid}/claimedLevelRewards`), {[lvl]: true });
                 
-                Swal.fire({icon: 'success', title: 'Reward Claimed!', text: 'Check your Wallet or Prop House.', background: '#111', color: '#fff'});
+                Swal.fire({icon: 'success', title: 'Reward Claimed!', text: 'Reward added to your Prop House.', background: '#111', color: '#fff'});
                 
                 openLevelModal(); 
                 
@@ -3708,57 +3684,110 @@ window.leaveSeat = async (sid) => {
             const snap = await get(ref(db, `users/${currentUser.uid}`));
             const userData = snap.val() || {};
             const currentEquipped = userData.currentFrame;
-            const unlockedFrames = userData.unlockedFrames || {};
+            const currentVip = userData.nameColorClass;
             
+            let unlockedFrames = userData.unlockedFrames || {};
+            const unlockedVIPs = userData.unlockedVIPs || {}; 
+            
+            let needsMigration = false;
+
+            if (Object.keys(unlockedVIPs).length > 0) {
+                for (let [vipClass, isOwned] of Object.entries(unlockedVIPs)) {
+                    if (isOwned) {
+                        let lvl = 20; let days = 7; let iconPath = './green_vip.png'; let vName = 'VIP Green';
+                        
+                        if(vipClass.includes('yellow')) { lvl = 30; days = 30; iconPath = './yellow_vip.png'; vName = 'VIP Yellow'; }
+                        if(vipClass.includes('pink')) { lvl = 50; days = 14; iconPath = './pink_vip.png'; vName = 'VIP Pink'; }
+                        if(vipClass.includes('colorful')) { lvl = 100; days = 30; iconPath = './colorful_vip.png'; vName = 'VIP Colorful'; }
+                        
+                        let expiryTime = Date.now() + (days * 24 * 60 * 60 * 1000);
+                        let uniqueId = 'vip_migrated_' + lvl + '_' + Date.now();
+                        
+                        unlockedFrames[uniqueId] = {
+                            name: vName,
+                            img: vipClass,
+                            icon: iconPath,
+                            isVipName: true,
+                            purchasedAt: Date.now(),
+                            expiry: expiryTime,
+                            status: 'unused'
+                        };
+                        needsMigration = true;
+                    }
+                }
+            }
+
+            if (needsMigration) {
+                await update(ref(db, `users/${currentUser.uid}`), {
+                    unlockedFrames: unlockedFrames,
+                    unlockedVIPs: null 
+                });
+            }
+
             let htmlContent = '';
             let hasFrames = false;
 
-            for (let [purchaseId, frameData] of Object.entries(unlockedFrames)) {
+            for (let[purchaseId, frameData] of Object.entries(unlockedFrames)) {
                 hasFrames = true;
-                let isEquipped = (currentEquipped === frameData.img);
+                let isEquipped = frameData.isVipName ? (currentVip === frameData.img) : (currentEquipped === frameData.img);
                 let btnText, btnClass, btnAction, statusText;
 
                 if (frameData.status === 'unused') {
-                    btnText = "USE (Starts 7 Days)";
+                    btnText = "USE NOW";
                     btnClass = "bg-green-600";
-                    btnAction = `applyFrame('${purchaseId}', '${frameData.img}')`;
+                    btnAction = `applyFrame('${purchaseId}', '${frameData.img}', ${frameData.isVipName || false})`;
                     statusText = `<span class="text-green-400 text-[9px] font-bold">UNUSED</span>`;
-                } else if (frameData.expiry > Date.now()) {
+                } else if (frameData.expiry && frameData.expiry > Date.now()) {
                     let daysLeft = Math.max(1, Math.ceil((frameData.expiry - Date.now()) / (1000 * 60 * 60 * 24)));
                     statusText = `<span class="text-yellow-400 text-[9px] font-bold">${daysLeft} Days Left</span>`;
                     
                     if (isEquipped) {
-                        btnText = "UNEQUIP (Remove)";
+                        btnText = "UNEQUIP";
                         btnClass = "bg-red-600";
-                        btnAction = "unequipFrame()";
+                        btnAction = frameData.isVipName ? "removeVIPName()" : "unequipFrame()";
                     } else {
                         btnText = "EQUIP";
                         btnClass = "bg-blue-600";
-                        btnAction = `equipActiveFrame('${frameData.img}')`;
+                        btnAction = `equipActiveFrame('${frameData.img}', ${frameData.isVipName || false})`;
                     }
                 } else {
-                    // Expired
                     statusText = `<span class="text-red-500 text-[9px] font-bold">EXPIRED</span>`;
                     btnText = "DELETE";
                     btnClass = "bg-gray-600";
                     btnAction = `deleteExpiredFrame('${purchaseId}', ${isEquipped})`;
                 }
 
+                let iconHtml = '';
+                let finalName = frameData.name;
+
+                if (frameData.isVipName) {
+                    let iconSrc = frameData.icon;
+                    // پرانے ناموں کو زبردستی خوبصورت ناموں میں بدلنا
+                    if(frameData.img.includes('green')) { iconSrc = './green_vip.png'; finalName = 'VIP Green'; }
+                    else if(frameData.img.includes('yellow')) { iconSrc = './yellow_vip.png'; finalName = 'VIP Yellow'; }
+                    else if(frameData.img.includes('pink')) { iconSrc = './pink_vip.png'; finalName = 'VIP Pink'; }
+                    else if(frameData.img.includes('colorful')) { iconSrc = './colorful_vip.png'; finalName = 'VIP Colorful'; }
+                    
+                    // یہ لائن میں نے اپڈیٹ کی ہے تاکہ اگر امیج نہ ملے تو کچھ بھی شو نہ ہو، گرے ڈبہ ختم!
+                    iconHtml = `<img src="${iconSrc}" class="w-16 h-16 object-contain drop-shadow-lg" onerror="this.style.display='none'">`;
+                } else {
+                    iconHtml = `<img src="${currentUser.photoURL}" class="w-14 h-14 rounded-full object-cover"><img src="${frameData.img}" class="absolute inset-0 w-full h-full object-contain pointer-events-none" onerror="this.style.display='none'">`;
+                }
+
                 htmlContent += `
                 <div class="bg-gray-900 border ${isEquipped ? 'border-green-500' : 'border-gray-700'} rounded-xl p-4 flex flex-col items-center relative shadow-lg">
                     ${isEquipped ? '<div class="absolute top-2 left-2 w-3 h-3 bg-green-500 rounded-full shadow-[0_0_8px_#22c55e]"></div>' : ''}
                     <div class="w-20 h-20 relative mb-2 flex items-center justify-center">
-                        <img src="${currentUser.photoURL}" class="w-14 h-14 rounded-full object-cover">
-                        <img src="${frameData.img}" class="absolute inset-0 w-full h-full object-contain pointer-events-none" onerror="this.style.display='none'">
+                        ${iconHtml}
                     </div>
-                    <span class="text-white font-bold text-xs text-center truncate w-full">${frameData.name}</span>
+                    <span class="text-white font-bold text-[13px] text-center w-full truncate px-1">${finalName}</span>
                     <div class="mb-3 mt-1">${statusText}</div>
                     <button onclick="${btnAction}" class="w-full ${btnClass} text-white font-bold text-[10px] py-2 rounded-lg transition active:scale-95 uppercase">${btnText}</button>
                 </div>`;
             }
 
             if (!hasFrames) {
-                grid.innerHTML = '<div class="text-gray-500 text-center w-full mt-10 col-span-2 text-sm">Your warehouse is empty.<br>Go to Store to buy frames.</div>';
+                grid.innerHTML = '<div class="text-gray-500 text-center w-full mt-10 col-span-2 text-sm">Your warehouse is empty.</div>';
             } else {
                 grid.innerHTML = htmlContent;
             }
@@ -3774,24 +3803,21 @@ window.leaveSeat = async (sid) => {
             modal.style.display = 'none';
         };
 
-        // جب فریم پہلی بار استعمال ہو (7 دن کا ٹائم شروع)
-        window.applyFrame = async (purchaseId, imgPath) => {
-            const expiryTime = Date.now() + (7 * 24 * 60 * 60 * 1000); // 7 Days
-            
+        window.applyFrame = async (purchaseId, imgPath, isVipName = false) => {
             await update(ref(db, `users/${currentUser.uid}/unlockedFrames/${purchaseId}`), {
                 activatedAt: Date.now(),
-                expiry: expiryTime,
                 status: 'active'
             });
-
-            await equipActiveFrame(imgPath);
-            Swal.fire({toast:true, icon:'success', title:'7-Day Timer Started!', position:'top-end', showConfirmButton:false, timer:2000});
+            await window.equipActiveFrame(imgPath, isVipName);
+            Swal.fire({toast:true, icon:'success', title:'Timer Started!', position:'top-end', showConfirmButton:false, timer:2000});
         };
 
-        // ٹائم شروع ہونے کے بعد صرف پہننے (Equip) کے لیے
-        // فریم پہننے (USE) کے لیے
-        window.equipActiveFrame = async (imgPath) => {
-            await update(ref(db, `users/${currentUser.uid}`), { currentFrame: imgPath }); 
+        window.equipActiveFrame = async (imgPath, isVipName = false) => {
+            if (isVipName) {
+                await update(ref(db, `users/${currentUser.uid}`), { nameColorClass: imgPath }); 
+            } else {
+                await update(ref(db, `users/${currentUser.uid}`), { currentFrame: imgPath }); 
+            }
             
             if(currentRoomId) { 
                 const seatsSnap = await get(ref(db, `rooms/${currentRoomId}/seats`)); 
@@ -3799,16 +3825,19 @@ window.leaveSeat = async (sid) => {
                     const seats = seatsSnap.val(); 
                     Object.keys(seats).forEach(async (k) => { 
                         if(seats[k].uid === currentUser.uid) { 
-                            await update(ref(db, `rooms/${currentRoomId}/seats/${k}`), { frame: imgPath }); 
+                            if (isVipName) {
+                                await update(ref(db, `rooms/${currentRoomId}/seats/${k}`), { nameColorClass: imgPath }); 
+                            } else {
+                                await update(ref(db, `rooms/${currentRoomId}/seats/${k}`), { frame: imgPath }); 
+                            }
                         } 
                     }); 
                 } 
             } 
-            window.openPropHouse(); // پیج ریفریش کرے گا
-            Swal.fire({toast:true, icon:'success', title:'Frame Equipped!', position:'top', showConfirmButton:false, timer:1500});
+            window.openPropHouse();
+            Swal.fire({toast:true, icon:'success', title:'Equipped!', position:'top', showConfirmButton:false, timer:1500});
         };
 
-        // فریم ہٹانے (UNEQUIP / UNUSE) کے لیے
         window.unequipFrame = async () => { 
             await update(ref(db, `users/${currentUser.uid}`), { currentFrame: null }); 
             if(currentRoomId) { 
@@ -3822,19 +3851,9 @@ window.leaveSeat = async (sid) => {
                     }); 
                 } 
             } 
-            window.openPropHouse(); // پیج ریفریش کرے گا
-            Swal.fire({toast:true, icon:'info', title:'Frame Removed', position:'top', showConfirmButton:false, timer:1500}); 
-        };
-
-        // Expire ہونے کے بعد ڈیلیٹ کرنے کے لیے
-        window.deleteExpiredFrame = async (purchaseId, wasEquipped) => {
-            if (wasEquipped) {
-                await unequipFrame();
-            }
-            await remove(ref(db, `users/${currentUser.uid}/unlockedFrames/${purchaseId}`));
             window.openPropHouse();
         };
-        // ================= END NEW STORE & WAREHOUSE SYSTEM =================
+
         window.removeVIPName = async () => {
             await update(ref(db, `users/${currentUser.uid}`), { nameColorClass: null });
             if(currentRoomId) {
@@ -3846,8 +3865,13 @@ window.leaveSeat = async (sid) => {
                     });
                 }
             }
-            Swal.fire({toast:true, icon:'info', title:'VIP Name Removed', position:'top-end', showConfirmButton:false, timer:1500});
-            openPropHouse();
+            window.openPropHouse();
+        };
+
+        window.deleteExpiredFrame = async (purchaseId, wasEquipped) => {
+            if (wasEquipped) await unequipFrame();
+            await remove(ref(db, `users/${currentUser.uid}/unlockedFrames/${purchaseId}`));
+            window.openPropHouse();
         };
 
         window.closePropHouse = () => {
@@ -6276,54 +6300,27 @@ window.loadCPWeeklyComingSoon = function() {
     
     listContainer.innerHTML = html;
 };
-// ================= ویب آر ٹی سی (آواز) کا سسٹم =================
-// یہ سسٹم 10-20 یوزرز کے لیے مکمل مفت ہے
+// ================= ویب آر ٹی سی (آواز) اور اینیمیشن کا سسٹم =================
 
-let peerConnections = {};        // تمام کنکشنز
-let localAudioStream = null;     // اپنی آواز
-let currentSeatId = null;        // موجودہ سیٹ
-let pendingCandidates = {};      // ICE کینڈیڈیٹس
+let peerConnections = {};        
+let localAudioStream = null;     
+let currentSeatId = null;        
+let audioContexts = {}; // ریموٹ یوزرز کے بلبلے (اینیمیشن) دکھانے کے لیے
 
-// STUN سرور (مکمل مفت)
 const iceServers = {
-    iceServers: [
+    iceServers:[
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        { urls: 'stun:stun.ekiga.net' },
-        { urls: 'stun:stun.ideasip.com' },
-        { urls: 'stun:stun.schlund.de' },
-        { urls: 'stun:stun.stunprotocol.org:3478' },
-        { urls: 'stun:stun.voiparound.com' },
-        { urls: 'stun:stun.voipbuster.com' }
-    ],
-    iceCandidatePoolSize: 10
+        { urls: 'stun:stun4.l.google.com:19302' }
+    ]
 };
 
-// ========== مائک تک رسائی ==========
-// ================= خوبصورت انگلش مائک پرامپٹ =================
-// ================= چھوٹا اور سادہ مائک پرامپٹ =================
 async function initLocalAudio() {
     try {
         if (localAudioStream) return localAudioStream;
         
-        // براؤزر چیک
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            Swal.fire({
-                icon: 'error',
-                title: 'Browser Not Supported',
-                text: 'Please use Chrome, Firefox, or Safari.',
-                background: '#111',
-                color: '#fff',
-                timer: 2000,
-                showConfirmButton: false
-            });
-            return null;
-        }
-        
-        // چھوٹا سا پرامپٹ
         const result = await Swal.fire({
             title: '🎤 Microphone Access',
             text: 'YARAAN wants to access your microphone',
@@ -6332,80 +6329,32 @@ async function initLocalAudio() {
             confirmButtonColor: '#10b981',
             cancelButtonColor: '#6b7280',
             confirmButtonText: 'Allow',
-            cancelButtonText: 'Deny',
             background: '#111',
-            color: '#fff',
-            width: '350px'
+            color: '#fff'
         });
 
-        if (!result.isConfirmed) {
-            return null;
-        }
+        if (!result.isConfirmed) return null;
         
-        // مائک تک رسائی
         localAudioStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-                autoGainControl: true
-            } 
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
         });
-        
-        // چھوٹا سا ٹوسٹ
-        Swal.fire({
-            title: 'Microphone Ready',
-            icon: 'success',
-            background: '#111',
-            color: '#fff',
-            showConfirmButton: false,
-            timer: 1000,
-            toast: true,
-            position: 'top'
-        });
-        
-        const audioPreview = document.getElementById('local-audio-preview');
-        if (audioPreview) {
-            audioPreview.srcObject = localAudioStream;
-        }
         
         return localAudioStream;
-        
     } catch (err) {
-        console.error("❌ مائک ایرر:", err);
-        
-        let msg = 'Could not access microphone.';
-        if (err.name === 'NotAllowedError') msg = 'Microphone access denied.';
-        else if (err.name === 'NotFoundError') msg = 'No microphone found.';
-        
-        Swal.fire({
-            icon: 'error',
-            title: 'Microphone Error',
-            text: msg,
-            background: '#111',
-            color: '#fff',
-            timer: 2000,
-            showConfirmButton: false
-        });
+        Swal.fire({icon: 'error', title: 'Mic Error', text: 'Could not access microphone.', background: '#111', color: '#fff'});
         return null;
     }
 }
 
-// ========== نیا سادہ sitDown (چھوٹا) ==========
-// ========== نیا sitDown (بلبلوں کے ساتھ) ==========
 window.sitDown = async (sid, def) => {
     const sr = ref(db, `rooms/${currentRoomId}/seats`);
     const s = currentRoomSeats;
     
     if (s[sid] && (s[sid].locked || s[sid].uid)) return;
     
-    let unseatUpdates = {};
-    ['seat1','seat2','seat3','seat4','seat5','seat6'].forEach(k => {
+    let unseatUpdates = {};['seat1','seat2','seat3','seat4','seat5','seat6'].forEach(k => {
         if (s[k] && s[k].uid === currentUser.uid) {
             unseatUpdates[k] = null;
-            if (peerConnections[k]) {
-                peerConnections[k].close();
-                delete peerConnections[k];
-            }
         }
     });
     
@@ -6413,10 +6362,7 @@ window.sitDown = async (sid, def) => {
     const userData = userSnap.val();
     
     const stream = await initLocalAudio();
-    if (stream) {
-        // بلبلے شروع کریں
-        setupAudioRipple();
-    }
+    if (stream) setupAudioRipple();
     
     const mySeatData = {
         uid: currentUser.uid,
@@ -6427,500 +6373,309 @@ window.sitDown = async (sid, def) => {
         nameColorClass: userData.nameColorClass || null
     };
     
-    const targetSeatRef = child(sr, sid);
     await update(sr, unseatUpdates);
+    const targetSeatRef = child(sr, sid);
     await set(targetSeatRef, mySeatData);
     onDisconnect(targetSeatRef).remove();
     
     currentSeatId = sid;
-    
     document.getElementById(`menu-${sid}`).style.display = 'none';
     
-    setupAllPeerConnections();
+    // جب میں سیٹ پر بیٹھوں تو روم میں موجود ہر بندے (مائک والے اور آڈینس) کو اپنی آفر بھیجوں
+    setupAllPeerConnections(); 
 };
-// ========== سیٹ چھوڑنے کا اپڈیٹڈ فنکشن ==========
+
 window.leaveSeat = async (sid) => {
     const seatRef = ref(db, `rooms/${currentRoomId}/seats/${sid}`);
-    
-    // کنکشن بند کریں
-    if (peerConnections[sid]) {
-        peerConnections[sid].close();
-        delete peerConnections[sid];
-    }
-    
-    // Firebase سے ہٹائیں
+    cleanupRipples();
     onDisconnect(seatRef).cancel();
     await remove(seatRef);
     document.getElementById(`menu-${sid}`).style.display = 'none';
-    
     if (currentSeatId === sid) {
         currentSeatId = null;
+        // جب مائک چھوڑیں تو اپنا سٹریمنگ کنکشن بند کریں
+        cleanupWebRTC(); 
+        // دوبارہ آڈینس بن کر مائک والوں کو سنیں
+        setTimeout(setupAllPeerConnections, 1000); 
     }
 };
 
-// ========== تمام سیٹس پر کنکشن بنانا ==========
+// یہ فنکشن اب Audience اور Speakers دونوں کو کنیکٹ کرے گا
 function setupAllPeerConnections() {
-    if (!currentRoomSeats || !currentUser) return;
+    if (!currentRoomId || !currentUser) return;
     
-    Object.keys(currentRoomSeats).forEach(seatId => {
-        const seatData = currentRoomSeats[seatId];
-        
-        // اگر یہ میری سیٹ ہے تو نظر انداز کریں
-        if (seatData && seatData.uid === currentUser.uid) {
-            return;
-        }
-        
-        // اگر سیٹ خالی ہے تو نظر انداز کریں
-        if (!seatData || !seatData.uid) {
-            return;
-        }
-        
-        // اگر پہلے سے کنکشن ہے تو نظر انداز کریں
-        if (peerConnections[seatId]) {
-            return;
-        }
-        
-        // نیا کنکشن بنائیں
-        createPeerConnection(seatId, seatData.uid);
-    });
-}
-
-// ========== نیا کنکشن بنانا ==========
-function createPeerConnection(targetSeatId, targetUid) {
-    console.log(`🔌 کنکشن بنا رہے ہیں: ${targetSeatId} -> ${targetUid}`);
-    
-    const pc = new RTCPeerConnection(iceServers);
-    peerConnections[targetSeatId] = pc;
-    
-    // اپنی آواز شامل کریں
-    if (localAudioStream) {
-        localAudioStream.getTracks().forEach(track => {
-            pc.addTrack(track, localAudioStream);
+    // روم میں موجود تمام مائک والوں (Speakers) کے ساتھ کنکشن بنانا ہے
+    if(currentRoomSeats) {
+        Object.keys(currentRoomSeats).forEach(seatId => {
+            const seatData = currentRoomSeats[seatId];
+            if (seatData && seatData.uid && seatData.uid !== currentUser.uid) {
+                if (!peerConnections[seatData.uid]) {
+                    createPeerConnection(seatData.uid, seatId);
+                }
+            }
         });
     }
+}
+
+function createPeerConnection(targetUid, seatId) {
+    const pc = new RTCPeerConnection(iceServers);
+    peerConnections[targetUid] = pc;
     
-    // دوسرے کی آواز سننے کے لیے
+    if (localAudioStream && currentSeatId) {
+        localAudioStream.getTracks().forEach(track => pc.addTrack(track, localAudioStream));
+    }
+    
     pc.ontrack = (event) => {
-        console.log(`🔊 آواز آ رہی ہے: ${targetSeatId}`);
-        
-        // آڈیو عنصر بنائیں
-        const audio = document.createElement('audio');
+        let audio = document.getElementById(`audio-${targetUid}`);
+        if (!audio) {
+            audio = document.createElement('audio');
+            audio.id = `audio-${targetUid}`;
+            audio.autoplay = true;
+            document.getElementById('remote-audio-container').appendChild(audio);
+        }
         audio.srcObject = event.streams[0];
-        audio.autoplay = true;
-        audio.id = `audio-${targetSeatId}`;
-        document.getElementById('remote-audio-container').appendChild(audio);
+        
+        // دوسرے بندے کی آواز پر اس کا بلبلہ شو کروانا
+        setupRemoteAudioRipple(event.streams[0], targetUid);
     };
     
-    // ICE کینڈیڈیٹس کا تبادلہ
     pc.onicecandidate = (event) => {
         if (event.candidate) {
-            // Firebase پر بھیجیں
-            const candidateRef = ref(db, `calls/${targetUid}/candidates/${currentUser.uid}`);
-            set(candidateRef, {
-                candidate: event.candidate,
-                seatId: currentSeatId,
-                timestamp: Date.now()
+            set(ref(db, `calls/${targetUid}/candidates/${currentUser.uid}_${Date.now()}`), {
+                candidate: event.candidate, timestamp: Date.now()
             });
         }
     };
     
-    // کنکشن کی حالت
     pc.onconnectionstatechange = () => {
-        console.log(`📡 کنکشن حالت (${targetSeatId}):`, pc.connectionState);
         if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-            // کنکشن ختم ہو گیا
-            const audioEl = document.getElementById(`audio-${targetSeatId}`);
+            const audioEl = document.getElementById(`audio-${targetUid}`);
             if (audioEl) audioEl.remove();
-            delete peerConnections[targetSeatId];
+            delete peerConnections[targetUid];
         }
     };
     
-    // Offer بھیجیں
     pc.createOffer()
         .then(offer => pc.setLocalDescription(offer))
         .then(() => {
-            const offerRef = ref(db, `calls/${targetUid}/offers/${currentUser.uid}`);
-            set(offerRef, {
-                offer: pc.localDescription,
-                seatId: currentSeatId,
-                timestamp: Date.now()
+            set(ref(db, `calls/${targetUid}/offers/${currentUser.uid}`), {
+                offer: pc.localDescription, timestamp: Date.now()
             });
         });
-    
+        
     return pc;
 }
 
-// ========== Firebase پر سگنلنگ سننا ==========
 function listenForSignals() {
     if (!currentUser) return;
-    
     const uid = currentUser.uid;
     
-    // Offers سنیں
-    const offersRef = ref(db, `calls/${uid}/offers`);
-    onValue(offersRef, (snap) => {
+    // Offers
+    onValue(ref(db, `calls/${uid}/offers`), (snap) => {
         if (!snap.exists()) return;
-        
         snap.forEach(childSnap => {
             const data = childSnap.val();
             const fromUid = childSnap.key;
             
-            // پہلے سے کنکشن ہے؟
-            let targetSeatId = null;
-            Object.keys(currentRoomSeats).forEach(seatId => {
-                if (currentRoomSeats[seatId] && currentRoomSeats[seatId].uid === fromUid) {
-                    targetSeatId = seatId;
-                }
-            });
+            // آفر ایکسیپٹ کریں چاہے وہ آڈینس ہو یا سپیکر
+            if (peerConnections[fromUid]) return;
             
-            if (!targetSeatId) return;
-            
-            // اگر پہلے سے کنکشن ہے تو چھوڑ دیں
-            if (peerConnections[targetSeatId]) return;
-            
-            // نیا کنکشن بنائیں
             const pc = new RTCPeerConnection(iceServers);
-            peerConnections[targetSeatId] = pc;
+            peerConnections[fromUid] = pc;
             
-            // اپنی آواز شامل کریں
-            if (localAudioStream) {
-                localAudioStream.getTracks().forEach(track => {
-                    pc.addTrack(track, localAudioStream);
-                });
+            if (localAudioStream && currentSeatId) {
+                localAudioStream.getTracks().forEach(track => pc.addTrack(track, localAudioStream));
             }
             
-            // دوسرے کی آواز
             pc.ontrack = (event) => {
-                const audio = document.createElement('audio');
+                let audio = document.getElementById(`audio-${fromUid}`);
+                if (!audio) {
+                    audio = document.createElement('audio');
+                    audio.id = `audio-${fromUid}`;
+                    audio.autoplay = true;
+                    document.getElementById('remote-audio-container').appendChild(audio);
+                }
                 audio.srcObject = event.streams[0];
-                audio.autoplay = true;
-                audio.id = `audio-${targetSeatId}`;
-                document.getElementById('remote-audio-container').appendChild(audio);
+                setupRemoteAudioRipple(event.streams[0], fromUid);
             };
             
-            // ICE کینڈیڈیٹس
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
-                    const candidateRef = ref(db, `calls/${fromUid}/candidates/${uid}`);
-                    set(candidateRef, {
-                        candidate: event.candidate,
-                        seatId: currentSeatId,
-                        timestamp: Date.now()
+                    set(ref(db, `calls/${fromUid}/candidates/${uid}_${Date.now()}`), {
+                        candidate: event.candidate, timestamp: Date.now()
                     });
                 }
             };
             
-            // Offer سیٹ کریں
             pc.setRemoteDescription(data.offer)
                 .then(() => pc.createAnswer())
                 .then(answer => pc.setLocalDescription(answer))
                 .then(() => {
-                    const answerRef = ref(db, `calls/${fromUid}/answers/${uid}`);
-                    set(answerRef, {
-                        answer: pc.localDescription,
-                        seatId: currentSeatId,
-                        timestamp: Date.now()
+                    set(ref(db, `calls/${fromUid}/answers/${uid}`), {
+                        answer: pc.localDescription, timestamp: Date.now()
                     });
                 });
             
-            // اس Offer کو ڈیلیٹ کریں
             remove(childSnap.ref);
         });
     });
     
-    // Answers سنیں
-    const answersRef = ref(db, `calls/${uid}/answers`);
-    onValue(answersRef, (snap) => {
+    // Answers
+    onValue(ref(db, `calls/${uid}/answers`), (snap) => {
         if (!snap.exists()) return;
-        
         snap.forEach(childSnap => {
             const data = childSnap.val();
             const fromUid = childSnap.key;
-            
-            let targetSeatId = null;
-            Object.keys(currentRoomSeats).forEach(seatId => {
-                if (currentRoomSeats[seatId] && currentRoomSeats[seatId].uid === fromUid) {
-                    targetSeatId = seatId;
-                }
-            });
-            
-            if (targetSeatId && peerConnections[targetSeatId]) {
-                peerConnections[targetSeatId].setRemoteDescription(data.answer);
+            if (peerConnections[fromUid]) {
+                peerConnections[fromUid].setRemoteDescription(data.answer);
             }
-            
             remove(childSnap.ref);
         });
     });
     
-    // Candidates سنیں
-    const candidatesRef = ref(db, `calls/${uid}/candidates`);
-    onValue(candidatesRef, (snap) => {
+    // Candidates
+    onValue(ref(db, `calls/${uid}/candidates`), (snap) => {
         if (!snap.exists()) return;
-        
         snap.forEach(childSnap => {
             const data = childSnap.val();
-            const fromUid = childSnap.key;
-            
-            let targetSeatId = null;
-            Object.keys(currentRoomSeats).forEach(seatId => {
-                if (currentRoomSeats[seatId] && currentRoomSeats[seatId].uid === fromUid) {
-                    targetSeatId = seatId;
-                }
-            });
-            
-            if (targetSeatId && peerConnections[targetSeatId]) {
-                peerConnections[targetSeatId].addIceCandidate(data.candidate);
+            const fromUid = childSnap.key.split('_')[0]; 
+            if (peerConnections[fromUid]) {
+                peerConnections[fromUid].addIceCandidate(data.candidate);
             }
-            
             remove(childSnap.ref);
         });
     });
 }
 
-// ========== سیٹس کی تبدیلی سننا ==========
-function setupSeatListener() {
-    if (!currentRoomId) return;
-    
-    const seatsRef = ref(db, `rooms/${currentRoomId}/seats`);
-    onValue(seatsRef, (snap) => {
-        const oldSeats = currentRoomSeats;
-        currentRoomSeats = snap.val() || {};
-        
-        // پرانے کنکشنز کو بند کریں اگر کوئی سیٹ خالی ہو گئی
-        Object.keys(oldSeats).forEach(seatId => {
-            if (!currentRoomSeats[seatId] || !currentRoomSeats[seatId].uid) {
-                if (peerConnections[seatId]) {
-                    peerConnections[seatId].close();
-                    delete peerConnections[seatId];
-                    
-                    const audioEl = document.getElementById(`audio-${seatId}`);
-                    if (audioEl) audioEl.remove();
-                }
-            }
-        });
-        
-        // نئے کنکشنز بنائیں
-        setupAllPeerConnections();
-        
-        // UI اپڈیٹ کریں
-        updateSeat('seat1', currentRoomSeats.seat1, "UMAR");
-        updateSeat('seat2', currentRoomSeats.seat2, "GURIYA");
-        updateSeat('seat3', currentRoomSeats.seat3, "1");
-        updateSeat('seat4', currentRoomSeats.seat4, "2");
-        updateSeat('seat5', currentRoomSeats.seat5, "3");
-        updateSeat('seat6', currentRoomSeats.seat6, "4");
-        
-        const hc = document.getElementById('heartbeat-container');
-        const seat1Occupied = currentRoomSeats.seat1 && currentRoomSeats.seat1.uid;
-        const seat2Occupied = currentRoomSeats.seat2 && currentRoomSeats.seat2.uid;
-        if(seat1Occupied && seat2Occupied) {
-            hc.classList.add('heartbeat-active');
-        } else {
-            hc.classList.remove('heartbeat-active');
-        }
-    });
-}
-
-// ========== نیا cleanupWebRTC (بلبلوں کے ساتھ) ==========
 function cleanupWebRTC() {
-    cleanupRipples();  // بلبلے بند کریں
-    
-    Object.keys(peerConnections).forEach(seatId => {
-        peerConnections[seatId].close();
-        delete peerConnections[seatId];
+    cleanupRipples();
+    Object.keys(peerConnections).forEach(uid => {
+        peerConnections[uid].close();
+        delete peerConnections[uid];
     });
-    
     if (localAudioStream) {
         localAudioStream.getTracks().forEach(track => track.stop());
         localAudioStream = null;
     }
-    
     document.getElementById('remote-audio-container').innerHTML = '';
 }
 
-// ========== جوائن روم میں اضافہ ==========
-// (اصل joinRoom فنکشن میں یہ لائن شامل کریں)
-// cleanupWebRTC();  // پہلے صفائی
-// setupSeatListener();  // سیٹ سننے والا
-// listenForSignals();  // سگنل سننے والا
-
-// ========== مائک میوٹ/انمیوٹ (بلبلوں کے ساتھ) ==========
 window.toggleMic = () => {
     const btn = document.getElementById('btn-mic');
     isMicMuted = !isMicMuted;
-    
     if(localAudioStream) {
-        localAudioStream.getAudioTracks().forEach(track => {
-            track.enabled = !isMicMuted;
-        });
+        localAudioStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
     }
-    
     if(isMicMuted) {
         btn.className = 'fa-solid fa-microphone-slash room-icon-btn text-gray-500';
-        // بلبلے ہٹائیں
         document.querySelectorAll('.mic-ripple').forEach(el => el.remove());
     } else {
         btn.className = 'fa-solid fa-microphone room-icon-btn text-white';
     }
-    
-    if(currentRoomId) updateSeatMuteStatus();
 };
 
-// ========== اسپیکر میوٹ ==========
 window.toggleSpeaker = () => {
     const btn = document.getElementById('btn-speaker');
     isSpeakerMuted = !isSpeakerMuted;
-    
-    // تمام ریموٹ آڈیو کو میوٹ/انمیوٹ کریں
-    const audioElements = document.querySelectorAll('#remote-audio-container audio');
-    audioElements.forEach(audio => {
-        audio.muted = isSpeakerMuted;
-    });
-    
-    if(isSpeakerMuted) {
-        btn.className = 'fa-solid fa-volume-xmark room-icon-btn text-gray-500';
-    } else {
-        btn.className = 'fa-solid fa-volume-high room-icon-btn text-white';
-    }
+    document.querySelectorAll('#remote-audio-container audio').forEach(a => a.muted = isSpeakerMuted);
+    btn.className = isSpeakerMuted ? 'fa-solid fa-volume-xmark room-icon-btn text-gray-500' : 'fa-solid fa-volume-high room-icon-btn text-white';
 };
-// ========== مائک پر بلبلے (Ripple Effect) - نیا ==========
 
-// آواز کی شدت ناپنے کے لیے
+// ========== مائک پر بلبلے (Ripple Effect) ==========
 let audioAnalyser = null;
 let audioDataArray = null;
-let audioSource = null;
 let audioContext = null;
 let rippleInterval = null;
 
 function setupAudioRipple() {
     if (!localAudioStream) return;
-    
-    // پرانا انٹرول بند کریں
     if (rippleInterval) clearInterval(rippleInterval);
-    
     try {
-        // آڈیو سیٹ اپ
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        audioSource = audioContext.createMediaStreamSource(localAudioStream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 128;
-        analyser.smoothingTimeConstant = 0.3;
-        
-        audioSource.connect(analyser);
-        audioAnalyser = analyser;
-        audioDataArray = new Uint8Array(analyser.frequencyBinCount);
-        
-        // ہر 100ms بعد آواز چیک کریں
+        const source = audioContext.createMediaStreamSource(localAudioStream);
+        audioAnalyser = audioContext.createAnalyser();
+        audioAnalyser.fftSize = 128;
+        source.connect(audioAnalyser);
+        audioDataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
         rippleInterval = setInterval(checkAudioLevel, 100);
-        
-        console.log("✅ بلبلے تیار");
-    } catch (e) {
-        console.log("❌ بلبلے میں مسئلہ:", e);
-    }
+    } catch (e) { console.log(e); }
 }
 
 function checkAudioLevel() {
-    // اگر میوٹ ہے تو کچھ نہ کریں
     if (isMicMuted || !audioAnalyser || !currentSeatId) {
-        removeAllRipples();
+        removeRipple(currentSeatId);
         return;
     }
-    
     audioAnalyser.getByteFrequencyData(audioDataArray);
-    
-    // آواز کی شدت (0-255)
     let sum = 0;
-    for (let i = 0; i < audioDataArray.length; i++) {
-        sum += audioDataArray[i];
-    }
-    let average = sum / audioDataArray.length;
-    
-    // اگر آواز ہے تو بلبلے دکھائیں
-    if (average > 15) { // 15 سے اوپر = آواز
-        showRipple(currentSeatId, average);
-    } else {
-        removeAllRipples();
-    }
+    for (let i = 0; i < audioDataArray.length; i++) sum += audioDataArray[i];
+    if ((sum / audioDataArray.length) > 10) showRipple(currentSeatId);
+    else removeRipple(currentSeatId);
 }
 
-// ========== نیا showRipple (صرف گول سرکل میں) ==========
-function showRipple(seatId, intensity) {
-    // پہلے والے بلبلے ہٹائیں
-    removeAllRipples();
-    
+// دوسرے یوزرز کی اینیمیشن
+function setupRemoteAudioRipple(stream, uid) {
+    try {
+        if(!audioContexts[uid]) {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const source = ctx.createMediaStreamSource(stream);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 128;
+            source.connect(analyser);
+            audioContexts[uid] = { ctx, analyser, dataArray: new Uint8Array(analyser.frequencyBinCount) };
+            
+            setInterval(() => {
+                if(isSpeakerMuted) return;
+                const data = audioContexts[uid];
+                data.analyser.getByteFrequencyData(data.dataArray);
+                let sum = 0;
+                for (let i = 0; i < data.dataArray.length; i++) sum += data.dataArray[i];
+                let avg = sum / data.dataArray.length;
+                
+                let seatId = null;
+                for (let k in currentRoomSeats) {
+                    if (currentRoomSeats[k] && currentRoomSeats[k].uid === uid) seatId = k;
+                }
+                if (seatId && avg > 10) showRipple(seatId);
+                else if (seatId) removeRipple(seatId);
+            }, 100);
+        }
+    } catch(e) {}
+}
+
+function showRipple(seatId) {
     const seatContainer = document.getElementById(`cont-${seatId}`);
     if (!seatContainer) return;
-    
-    // صرف visual-root والے حصے میں بلبلے
     const visualRoot = seatContainer.querySelector('.visual-root');
     if (!visualRoot) return;
     
-    // visual-root کو relative کریں
-    visualRoot.style.position = 'relative';
-    
-    // شدت کے حساب سے بلبلے کا سائز (چھوٹا - 30px سے 60px)
-    let size = 30 + (intensity / 10);
-    if (size > 60) size = 60;
-    
-    // بلبلہ بنائیں - صرف visual-root میں
-    const ripple = document.createElement('div');
-    ripple.className = 'mic-ripple';
-    ripple.style.cssText = `
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: ${size}px;
-        height: ${size}px;
-        border-radius: 50%;
-        background: rgba(34, 197, 94, 0.4);
-        box-shadow: 0 0 20px rgba(34, 197, 94, 0.9);
-        animation: rippleWave 0.8s ease-out infinite;
-        z-index: 30;
-        pointer-events: none;
-        border: 2px solid rgba(255, 255, 255, 0.3);
-    `;
-    
-    visualRoot.appendChild(ripple);
-    
-    // دوسرا بلبلہ (اندرونی) - چھوٹا
-    setTimeout(() => {
-        if (visualRoot.querySelector('.mic-ripple')) {
-            const innerRipple = document.createElement('div');
-            innerRipple.className = 'mic-ripple-inner';
-            innerRipple.style.cssText = `
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                width: ${size - 15}px;
-                height: ${size - 15}px;
-                border-radius: 50%;
-                background: rgba(34, 197, 94, 0.6);
-                box-shadow: 0 0 30px #22c55e;
-                animation: innerPulse 0.5s ease-out infinite alternate;
-                z-index: 31;
-                pointer-events: none;
-                border: 1px solid white;
-            `;
-            visualRoot.appendChild(innerRipple);
-        }
-    }, 100);
+    if (!visualRoot.querySelector('.mic-ripple')) {
+        const ripple = document.createElement('div');
+        ripple.className = 'mic-ripple';
+        visualRoot.appendChild(ripple);
+    }
 }
 
-// ========== نیا removeAllRipples (صرف visual-root سے) ==========
+function removeRipple(seatId) {
+    if(!seatId) return;
+    const seatContainer = document.getElementById(`cont-${seatId}`);
+    if (seatContainer) {
+        const rip = seatContainer.querySelector('.mic-ripple');
+        if(rip) rip.remove();
+    }
+}
+
 function removeAllRipples() {
-    // صرف visual-root کے اندر کے بلبلے ہٹائیں
-    document.querySelectorAll('.visual-root .mic-ripple, .visual-root .mic-ripple-inner').forEach(el => el.remove());
+    document.querySelectorAll('.mic-ripple').forEach(el => el.remove());
 }
 
-// صفائی
 function cleanupRipples() {
     if (rippleInterval) clearInterval(rippleInterval);
-    if (audioSource) audioSource.disconnect();
-    if (audioContext) audioContext.close();
     removeAllRipples();
 }
-    </script>
+
+// Ensure listeners start on load
+setTimeout(() => { if (typeof listenForSignals === 'function') listenForSignals(); }, 2000);
+</script>
 </body>
 </html>
