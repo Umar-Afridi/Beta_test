@@ -811,6 +811,46 @@
     0% { filter: drop-shadow(0 0 5px #22c55e); }
     100% { filter: drop-shadow(0 0 15px #22c55e); }
 }
+/* visual-root کو ریلیٹیو رکھنے کے لیے */
+.visual-root {
+    position: relative !important;
+    overflow: visible !important;
+}
+
+/* بلبلے صرف visual-root میں رہیں */
+.visual-root .mic-ripple,
+.visual-root .mic-ripple-inner {
+    position: absolute !important;
+    border-radius: 50% !important;
+    pointer-events: none !important;
+}
+
+/* انیمیشن - یہ پہلے سے ہے تو نہ بھی ڈالیں تو چلے گا */
+@keyframes rippleWave {
+    0% {
+        transform: translate(-50%, -50%) scale(0.8);
+        opacity: 1;
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.2);
+        opacity: 0.7;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(0.8);
+        opacity: 1;
+    }
+}
+
+@keyframes innerPulse {
+    0% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.8;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(1.3);
+        opacity: 0.4;
+    }
+}
 </style>
     </style>
 </head>
@@ -6249,8 +6289,17 @@ const iceServers = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
-    ]
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+        { urls: 'stun:stun.ekiga.net' },
+        { urls: 'stun:stun.ideasip.com' },
+        { urls: 'stun:stun.schlund.de' },
+        { urls: 'stun:stun.stunprotocol.org:3478' },
+        { urls: 'stun:stun.voiparound.com' },
+        { urls: 'stun:stun.voipbuster.com' }
+    ],
+    iceCandidatePoolSize: 10
 };
 
 // ========== مائک تک رسائی ==========
@@ -6794,6 +6843,7 @@ function checkAudioLevel() {
     }
 }
 
+// ========== نیا showRipple (صرف گول سرکل میں) ==========
 function showRipple(seatId, intensity) {
     // پہلے والے بلبلے ہٹائیں
     removeAllRipples();
@@ -6801,11 +6851,18 @@ function showRipple(seatId, intensity) {
     const seatContainer = document.getElementById(`cont-${seatId}`);
     if (!seatContainer) return;
     
-    // شدت کے حساب سے بلبلے کا سائز (50px سے 100px)
-    let size = 50 + (intensity / 5);
-    if (size > 100) size = 100;
+    // صرف visual-root والے حصے میں بلبلے
+    const visualRoot = seatContainer.querySelector('.visual-root');
+    if (!visualRoot) return;
     
-    // بلبلہ بنائیں
+    // visual-root کو relative کریں
+    visualRoot.style.position = 'relative';
+    
+    // شدت کے حساب سے بلبلے کا سائز (چھوٹا - 30px سے 60px)
+    let size = 30 + (intensity / 10);
+    if (size > 60) size = 60;
+    
+    // بلبلہ بنائیں - صرف visual-root میں
     const ripple = document.createElement('div');
     ripple.className = 'mic-ripple';
     ripple.style.cssText = `
@@ -6816,19 +6873,19 @@ function showRipple(seatId, intensity) {
         width: ${size}px;
         height: ${size}px;
         border-radius: 50%;
-        background: rgba(34, 197, 94, 0.3);
-        box-shadow: 0 0 20px rgba(34, 197, 94, 0.8);
+        background: rgba(34, 197, 94, 0.4);
+        box-shadow: 0 0 20px rgba(34, 197, 94, 0.9);
         animation: rippleWave 0.8s ease-out infinite;
-        z-index: 25;
+        z-index: 30;
         pointer-events: none;
+        border: 2px solid rgba(255, 255, 255, 0.3);
     `;
     
-    seatContainer.style.position = 'relative';
-    seatContainer.appendChild(ripple);
+    visualRoot.appendChild(ripple);
     
-    // دوسرا بلبلہ (اندرونی)
+    // دوسرا بلبلہ (اندرونی) - چھوٹا
     setTimeout(() => {
-        if (document.querySelector('.mic-ripple')) {
+        if (visualRoot.querySelector('.mic-ripple')) {
             const innerRipple = document.createElement('div');
             innerRipple.className = 'mic-ripple-inner';
             innerRipple.style.cssText = `
@@ -6836,22 +6893,25 @@ function showRipple(seatId, intensity) {
                 top: 50%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                width: ${size - 20}px;
-                height: ${size - 20}px;
+                width: ${size - 15}px;
+                height: ${size - 15}px;
                 border-radius: 50%;
-                background: rgba(34, 197, 94, 0.5);
+                background: rgba(34, 197, 94, 0.6);
                 box-shadow: 0 0 30px #22c55e;
                 animation: innerPulse 0.5s ease-out infinite alternate;
-                z-index: 26;
+                z-index: 31;
                 pointer-events: none;
+                border: 1px solid white;
             `;
-            seatContainer.appendChild(innerRipple);
+            visualRoot.appendChild(innerRipple);
         }
     }, 100);
 }
 
+// ========== نیا removeAllRipples (صرف visual-root سے) ==========
 function removeAllRipples() {
-    document.querySelectorAll('.mic-ripple, .mic-ripple-inner').forEach(el => el.remove());
+    // صرف visual-root کے اندر کے بلبلے ہٹائیں
+    document.querySelectorAll('.visual-root .mic-ripple, .visual-root .mic-ripple-inner').forEach(el => el.remove());
 }
 
 // صفائی
