@@ -774,6 +774,42 @@
 .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
+}/* مائک کے گرد بلبلے */
+@keyframes rippleWave {
+    0% {
+        transform: translate(-50%, -50%) scale(0.8);
+        opacity: 1;
+    }
+    50% {
+        transform: translate(-50%, -50%) scale(1.2);
+        opacity: 0.7;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(0.8);
+        opacity: 1;
+    }
+}
+
+@keyframes innerPulse {
+    0% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 0.8;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(1.3);
+        opacity: 0.4;
+    }
+}
+
+/* جب کوئی بول رہا ہو تو مائک کا رنگ بدلیں */
+.seat-occupied .fa-microphone {
+    color: #22c55e !important;
+    animation: micGlow 1s infinite alternate;
+}
+
+@keyframes micGlow {
+    0% { filter: drop-shadow(0 0 5px #22c55e); }
+    100% { filter: drop-shadow(0 0 15px #22c55e); }
 }
 </style>
     </style>
@@ -3525,11 +3561,26 @@ window.joinRoom = async (rid) => {
                 menu.innerHTML = html; 
             } 
         };
-        window.leaveSeat = async (sid) => { const seatRef = ref(db, `rooms/${currentRoomId}/seats/${sid}`); onDisconnect(seatRef).cancel(); await remove(seatRef); document.getElementById(`menu-${sid}`).style.display = 'none'; };
-        window.unseatUser = async (sid) => { await remove(ref(db, `rooms/${currentRoomId}/seats/${sid}`)); document.getElementById(`menu-${sid}`).style.display = 'none'; }; 
-        window.kickUserFromRoom = async (sid, targetUid) => { await remove(ref(db, `rooms/${currentRoomId}/seats/${sid}`)); await set(ref(db, `rooms/${currentRoomId}/kicked/${targetUid}`), Date.now()); document.getElementById(`menu-${sid}`).style.display = 'none'; };
-        window.toggleLock = async (sid, state) => { if(state) { await set(ref(db, `rooms/${currentRoomId}/seats/${sid}`), { locked: true }); } else { await remove(ref(db, `rooms/${currentRoomId}/seats/${sid}`)); } document.getElementById(`menu-${sid}`).style.display = 'none'; };
-        
+        // ========== نیا leaveSeat (بلبلوں کے ساتھ) ==========
+window.leaveSeat = async (sid) => {
+    const seatRef = ref(db, `rooms/${currentRoomId}/seats/${sid}`);
+    
+    if (peerConnections[sid]) {
+        peerConnections[sid].close();
+        delete peerConnections[sid];
+    }
+    
+    // بلبلے بند کریں
+    cleanupRipples();
+    
+    onDisconnect(seatRef).cancel();
+    await remove(seatRef);
+    document.getElementById(`menu-${sid}`).style.display = 'none';
+    
+    if (currentSeatId === sid) {
+        currentSeatId = null;
+    }
+};
        const STORE_FRAMES =[
             { id: 'frame_1', name: 'Starter Frame', price: 10000, img: './frame_1.png' },
             { id: 'frame_2', name: 'Silver Frame', price: 20000, img: './frame_2.png' },
@@ -6291,13 +6342,13 @@ async function initLocalAudio() {
 }
 
 // ========== نیا سادہ sitDown (چھوٹا) ==========
+// ========== نیا sitDown (بلبلوں کے ساتھ) ==========
 window.sitDown = async (sid, def) => {
     const sr = ref(db, `rooms/${currentRoomId}/seats`);
     const s = currentRoomSeats;
     
     if (s[sid] && (s[sid].locked || s[sid].uid)) return;
     
-    // پہلے والی سیٹ چھوڑیں
     let unseatUpdates = {};
     ['seat1','seat2','seat3','seat4','seat5','seat6'].forEach(k => {
         if (s[k] && s[k].uid === currentUser.uid) {
@@ -6312,18 +6363,11 @@ window.sitDown = async (sid, def) => {
     const userSnap = await get(ref(db, `users/${currentUser.uid}`));
     const userData = userSnap.val();
     
-    // ========== چھوٹا سا مائک چیک ==========
     const stream = await initLocalAudio();
     if (stream) {
-        push(ref(db, `rooms/${currentRoomId}/messages`), {
-            name: currentUser.displayName,
-            text: 'joined',
-            type: 'system',
-            timestamp: Date.now()
-        });
+        // بلبلے شروع کریں
+        setupAudioRipple();
     }
-    // کوئی بڑا پاپ اپ نہیں
-    // ========================================
     
     const mySeatData = {
         uid: currentUser.uid,
@@ -6628,21 +6672,20 @@ function setupSeatListener() {
     });
 }
 
-// ========== روم چھوڑتے وقت صفائی ==========
+// ========== نیا cleanupWebRTC (بلبلوں کے ساتھ) ==========
 function cleanupWebRTC() {
-    // تمام کنکشن بند کریں
+    cleanupRipples();  // بلبلے بند کریں
+    
     Object.keys(peerConnections).forEach(seatId => {
         peerConnections[seatId].close();
         delete peerConnections[seatId];
     });
     
-    // آواز بند کریں
     if (localAudioStream) {
         localAudioStream.getTracks().forEach(track => track.stop());
         localAudioStream = null;
     }
     
-    // آڈیو عناصر ہٹائیں
     document.getElementById('remote-audio-container').innerHTML = '';
 }
 
@@ -6652,7 +6695,7 @@ function cleanupWebRTC() {
 // setupSeatListener();  // سیٹ سننے والا
 // listenForSignals();  // سگنل سننے والا
 
-// ========== مائک میوٹ/انمیوٹ ==========
+// ========== مائک میوٹ/انمیوٹ (بلبلوں کے ساتھ) ==========
 window.toggleMic = () => {
     const btn = document.getElementById('btn-mic');
     isMicMuted = !isMicMuted;
@@ -6665,6 +6708,8 @@ window.toggleMic = () => {
     
     if(isMicMuted) {
         btn.className = 'fa-solid fa-microphone-slash room-icon-btn text-gray-500';
+        // بلبلے ہٹائیں
+        document.querySelectorAll('.mic-ripple').forEach(el => el.remove());
     } else {
         btn.className = 'fa-solid fa-microphone room-icon-btn text-white';
     }
@@ -6689,6 +6734,133 @@ window.toggleSpeaker = () => {
         btn.className = 'fa-solid fa-volume-high room-icon-btn text-white';
     }
 };
+// ========== مائک پر بلبلے (Ripple Effect) - نیا ==========
+
+// آواز کی شدت ناپنے کے لیے
+let audioAnalyser = null;
+let audioDataArray = null;
+let audioSource = null;
+let audioContext = null;
+let rippleInterval = null;
+
+function setupAudioRipple() {
+    if (!localAudioStream) return;
+    
+    // پرانا انٹرول بند کریں
+    if (rippleInterval) clearInterval(rippleInterval);
+    
+    try {
+        // آڈیو سیٹ اپ
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioSource = audioContext.createMediaStreamSource(localAudioStream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 128;
+        analyser.smoothingTimeConstant = 0.3;
+        
+        audioSource.connect(analyser);
+        audioAnalyser = analyser;
+        audioDataArray = new Uint8Array(analyser.frequencyBinCount);
+        
+        // ہر 100ms بعد آواز چیک کریں
+        rippleInterval = setInterval(checkAudioLevel, 100);
+        
+        console.log("✅ بلبلے تیار");
+    } catch (e) {
+        console.log("❌ بلبلے میں مسئلہ:", e);
+    }
+}
+
+function checkAudioLevel() {
+    // اگر میوٹ ہے تو کچھ نہ کریں
+    if (isMicMuted || !audioAnalyser || !currentSeatId) {
+        removeAllRipples();
+        return;
+    }
+    
+    audioAnalyser.getByteFrequencyData(audioDataArray);
+    
+    // آواز کی شدت (0-255)
+    let sum = 0;
+    for (let i = 0; i < audioDataArray.length; i++) {
+        sum += audioDataArray[i];
+    }
+    let average = sum / audioDataArray.length;
+    
+    // اگر آواز ہے تو بلبلے دکھائیں
+    if (average > 15) { // 15 سے اوپر = آواز
+        showRipple(currentSeatId, average);
+    } else {
+        removeAllRipples();
+    }
+}
+
+function showRipple(seatId, intensity) {
+    // پہلے والے بلبلے ہٹائیں
+    removeAllRipples();
+    
+    const seatContainer = document.getElementById(`cont-${seatId}`);
+    if (!seatContainer) return;
+    
+    // شدت کے حساب سے بلبلے کا سائز (50px سے 100px)
+    let size = 50 + (intensity / 5);
+    if (size > 100) size = 100;
+    
+    // بلبلہ بنائیں
+    const ripple = document.createElement('div');
+    ripple.className = 'mic-ripple';
+    ripple.style.cssText = `
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: ${size}px;
+        height: ${size}px;
+        border-radius: 50%;
+        background: rgba(34, 197, 94, 0.3);
+        box-shadow: 0 0 20px rgba(34, 197, 94, 0.8);
+        animation: rippleWave 0.8s ease-out infinite;
+        z-index: 25;
+        pointer-events: none;
+    `;
+    
+    seatContainer.style.position = 'relative';
+    seatContainer.appendChild(ripple);
+    
+    // دوسرا بلبلہ (اندرونی)
+    setTimeout(() => {
+        if (document.querySelector('.mic-ripple')) {
+            const innerRipple = document.createElement('div');
+            innerRipple.className = 'mic-ripple-inner';
+            innerRipple.style.cssText = `
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: ${size - 20}px;
+                height: ${size - 20}px;
+                border-radius: 50%;
+                background: rgba(34, 197, 94, 0.5);
+                box-shadow: 0 0 30px #22c55e;
+                animation: innerPulse 0.5s ease-out infinite alternate;
+                z-index: 26;
+                pointer-events: none;
+            `;
+            seatContainer.appendChild(innerRipple);
+        }
+    }, 100);
+}
+
+function removeAllRipples() {
+    document.querySelectorAll('.mic-ripple, .mic-ripple-inner').forEach(el => el.remove());
+}
+
+// صفائی
+function cleanupRipples() {
+    if (rippleInterval) clearInterval(rippleInterval);
+    if (audioSource) audioSource.disconnect();
+    if (audioContext) audioContext.close();
+    removeAllRipples();
+}
     </script>
 </body>
 </html>
