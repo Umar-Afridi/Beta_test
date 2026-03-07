@@ -4297,10 +4297,20 @@ results.forEach(d => {
             closeThemeModal(); 
         }
         // یوٹیوب کی API سکرپٹ لوڈ کرنا (تاکہ ہم ویڈیو کو کنٹرول کر سکیں)
-        const tag = document.createElement('script');
-        tag.src = "https://www.youtube.com/iframe_api";
-        const firstScriptTag = document.getElementsByTagName('script')[0];
-        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        // 1. یوٹیوب کی API کو محفوظ طریقے سے لوڈ کرنا
+        window.isYtApiReady = false;
+        window.onYouTubeIframeAPIReady = function() {
+            window.isYtApiReady = true;
+            console.log("YouTube API is Ready!");
+        };
+
+        if (!document.getElementById('yt-api-script')) {
+            const tag = document.createElement('script');
+            tag.id = 'yt-api-script';
+            tag.src = "https://www.youtube.com/iframe_api";
+            const firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        }
 
         let ytPlayer = null;
         let syncInterval = null;
@@ -4330,7 +4340,6 @@ results.forEach(d => {
             } 
         };
 
-        // نیا: ویڈیو پلے کرنے کا جدید طریقہ جو State فائر بیس پر بھیجے گا
         function playVideoById(id) { 
             set(ref(db, `rooms/${currentRoomId}/videoSync`), {
                 videoId: id, 
@@ -4349,21 +4358,25 @@ results.forEach(d => {
             document.getElementById('screen-placeholder').classList.remove('hidden'); 
             
             const container = document.getElementById('yt-player-container');
-            if(container) container.classList.add('hidden'); 
-            if(ytPlayer && typeof ytPlayer.stopVideo === 'function') {
-                ytPlayer.stopVideo();
+            if(container) {
+                container.classList.add('hidden');
+                // پلیئر کو مکمل تباہ کریں تاکہ اگلی بار نیا بنے اور بلیک سکرین نہ دے
+                if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+                    ytPlayer.destroy();
+                    ytPlayer = null;
+                }
+                // Div کو دوبارہ بنا دیں
+                container.innerHTML = '<div id="yt-player"></div>';
             }
             if(syncInterval) clearInterval(syncInterval);
         };
 
-        // اونر کی طرف سے ویڈیو کو مسلسل سنک کرنے کا فنکشن
         function startOwnerSync() {
             if(syncInterval) clearInterval(syncInterval);
             syncInterval = setInterval(() => {
                 if (currentRoomOwner === currentUser.uid && ytPlayer && typeof ytPlayer.getPlayerState === 'function') {
                     let state = ytPlayer.getPlayerState();
                     let time = ytPlayer.getCurrentTime();
-                    // 1 = Playing, 2 = Paused, 3 = Buffering
                     if(state === 1 || state === 2) {
                         update(ref(db, `rooms/${currentRoomId}/videoSync`), {
                             state: state,
@@ -4373,8 +4386,10 @@ results.forEach(d => {
                         });
                     }
                 }
-            }, 1500); // ہر 1.5 سیکنڈ بعد اونر کی ویڈیو کا ٹائم فائر بیس پر جائے گا
+            }, 1500); 
         }
+
+     
 
         // ================= اپڈیٹڈ جوائن روم فنکشن (ویب آرٹی سی کے ساتھ) =================
 // ================= اپڈیٹڈ جوائن روم فنکشن (ویب آرٹی سی، 10 سیٹس، اور پاسورڈ کے ساتھ) =================
@@ -4625,7 +4640,7 @@ window.joinRoom = async (rid) => {
     
     const rr = ref(db, `rooms/${rid}`);
     
-    // === نیا سمارٹ ویڈیو سنک سسٹم ===
+    // === نیا سمارٹ ویڈیو سنک سسٹم (بلیک سکرین فکس کے ساتھ) ===
     let currentPlayingId = null;
     let isGuestSeeking = false;
 
@@ -4637,78 +4652,94 @@ window.joinRoom = async (rid) => {
 
         // اگر روم اونر ہے تو اسکرین ٹچ آن رکھیں، مہمانوں کے لیے آف کر دیں
         if (currentUser.uid === currentRoomOwner) {
-            blocker.style.display = 'none'; // Owner can touch
+            blocker.style.display = 'none'; 
         } else {
-            blocker.style.display = 'block'; // Guests cannot touch
+            blocker.style.display = 'block'; 
         }
 
         if(syncData && syncData.videoId) { 
             if(trigger) trigger.style.display = 'none'; 
             if(container) container.classList.remove('hidden'); 
 
-            // اگر یوٹیوب پلیئر ابھی تک نہیں بنا تو اسے بنائیں
-            if (!ytPlayer) {
-                ytPlayer = new window.YT.Player('yt-player', {
-                    height: '100%',
-                    width: '100%',
-                    videoId: syncData.videoId,
-                    playerVars: {
-                        'autoplay': 1,
-                        'controls': (currentUser.uid === currentRoomOwner) ? 1 : 0, // صرف اونر کو کنٹرولز دکھائیں
-                        'disablekb': 1,
-                        'rel': 0,
-                        'playsinline': 1
-                    },
-                    events: {
-                        'onReady': (event) => {
-                            if (currentUser.uid !== currentRoomOwner) {
-                                event.target.seekTo(syncData.time);
-                            }
-                            if (currentUser.uid === currentRoomOwner) {
-                                startOwnerSync(); // اونر کا سنک شروع کریں
+            // فنکشن جو چیک کرے گا کہ یوٹیوب ریڈی ہے یا نہیں
+            function loadYouTubePlayer() {
+                if (!window.YT || !window.YT.Player) {
+                    // اگر ریڈی نہیں ہے تو آدھے سیکنڈ بعد دوبارہ کوشش کرو (اس سے بلیک سکرین نہیں آئے گی)
+                    setTimeout(loadYouTubePlayer, 500);
+                    return;
+                }
+
+                if (!ytPlayer) {
+                    // اگر Div نہیں ہے تو اسے بنائیں
+                    if(!document.getElementById('yt-player')) {
+                        container.innerHTML = '<div id="yt-player"></div>';
+                    }
+
+                    ytPlayer = new window.YT.Player('yt-player', {
+                        height: '100%',
+                        width: '100%',
+                        videoId: syncData.videoId,
+                        playerVars: {
+                            'autoplay': 1,
+                            'controls': (currentUser.uid === currentRoomOwner) ? 1 : 0, 
+                            'disablekb': 1,
+                            'rel': 0,
+                            'playsinline': 1,
+                            'origin': window.location.origin // یہ بلیک سکرین کو روکنے کے لیے سب سے ضروری ہے
+                        },
+                        events: {
+                            'onReady': (event) => {
+                                if (currentUser.uid !== currentRoomOwner) {
+                                    event.target.seekTo(syncData.time);
+                                }
+                                if (currentUser.uid === currentRoomOwner) {
+                                    startOwnerSync(); 
+                                }
+                                event.target.playVideo(); // زبردستی پلے کریں
                             }
                         }
-                    }
-                });
-                currentPlayingId = syncData.videoId;
-            } 
-            // اگر پلیئر پہلے سے بنا ہوا ہے
-            else if (typeof ytPlayer.loadVideoById === 'function') {
-                // اگر نئی ویڈیو لگی ہے
-                if (currentPlayingId !== syncData.videoId) {
-                    ytPlayer.loadVideoById(syncData.videoId, syncData.time);
+                    });
                     currentPlayingId = syncData.videoId;
                 } 
-                // اگر وہی ویڈیو ہے تو اسے کنٹرول کریں (صرف Guests کے لیے)
-                else if (currentUser.uid !== currentRoomOwner && syncData.updatedBy !== currentUser.uid) {
-                    
-                    let localTime = ytPlayer.getCurrentTime();
-                    let serverTime = syncData.time;
-                    let state = syncData.state; // 1 = Play, 2 = Pause
-
-                    // اگر ٹائم میں 2 سیکنڈ سے زیادہ کا فرق ہے تو آگے پیچھے کرو (Seek)
-                    if (Math.abs(localTime - serverTime) > 2 && !isGuestSeeking) {
-                        isGuestSeeking = true;
-                        ytPlayer.seekTo(serverTime);
-                        setTimeout(() => { isGuestSeeking = false; }, 1000);
-                    }
-
-                    // اگر اونر نے Pause کیا ہے تو Guest بھی Pause کرے
-                    if (state === 2 && ytPlayer.getPlayerState() !== 2) {
-                        ytPlayer.pauseVideo();
+                else if (typeof ytPlayer.loadVideoById === 'function') {
+                    if (currentPlayingId !== syncData.videoId) {
+                        ytPlayer.loadVideoById(syncData.videoId, syncData.time);
+                        currentPlayingId = syncData.videoId;
                     } 
-                    // اگر اونر نے Play کیا ہے تو Guest بھی Play کرے
-                    else if (state === 1 && ytPlayer.getPlayerState() !== 1) {
-                        ytPlayer.playVideo();
+                    else if (currentUser.uid !== currentRoomOwner && syncData.updatedBy !== currentUser.uid) {
+                        let localTime = ytPlayer.getCurrentTime();
+                        let serverTime = syncData.time;
+                        let state = syncData.state; 
+
+                        if (Math.abs(localTime - serverTime) > 2 && !isGuestSeeking) {
+                            isGuestSeeking = true;
+                            ytPlayer.seekTo(serverTime);
+                            setTimeout(() => { isGuestSeeking = false; }, 1000);
+                        }
+
+                        if (state === 2 && ytPlayer.getPlayerState() !== 2) {
+                            ytPlayer.pauseVideo();
+                        } 
+                        else if (state === 1 && ytPlayer.getPlayerState() !== 1) {
+                            ytPlayer.playVideo();
+                        }
                     }
                 }
             }
+            
+            // پلیئر لوڈ کرنے والا فنکشن کال کریں
+            loadYouTubePlayer();
+
         } else { 
             // ویڈیو کلئیر کر دی گئی ہے
             if(trigger) trigger.style.display = 'flex'; 
-            if(container) container.classList.add('hidden'); 
-            if(ytPlayer && typeof ytPlayer.stopVideo === 'function') {
-                ytPlayer.stopVideo();
+            if(container) {
+                container.classList.add('hidden'); 
+                if(ytPlayer && typeof ytPlayer.destroy === 'function') {
+                    ytPlayer.destroy();
+                    ytPlayer = null;
+                }
+                container.innerHTML = '<div id="yt-player"></div>';
             }
             if(syncInterval) clearInterval(syncInterval);
         } 
