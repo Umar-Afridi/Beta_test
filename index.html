@@ -5150,14 +5150,39 @@ window.joinRoom = async (rid) => {
                 await remove(ref(db, `rooms/${currentRoomId}/seats/${seatId}`));
             }
         };
-        // 💡 3. FAST SIT DOWN (پروفیشنل طریقہ - نو لوڈنگ سکرین!)
+        // 💡 3. FAST SIT DOWN (کروم کی اصلی پرمیشن کے ساتھ)
 window.sitDown = async (sid, def) => {
     const sr = ref(db, `rooms/${currentRoomId}/seats`);
     const s = currentRoomSeats;
     
     if (s[sid] && (s[sid].locked || s[sid].uid)) return;
+
+    // ========================================================
+    // 🔥 NEW FIX: براؤزر کی اصلی پرمیشن مانگنے کا طریقہ (صرف پہلی بار)
+    // ========================================================
+    try {
+        // یہ لائن کروم کو مجبور کرے گی کہ وہ اپنا 'Allow Mic' والا پاپ اپ دکھائے
+        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // پرمیشن ملنے کے فوراً بعد ہم اس عارضی مائیک کو بند کر دیں گے تاکہ ZegoCloud اسے استعمال کر سکے
+        tempStream.getTracks().forEach(track => track.stop());
+        
+    } catch (err) {
+        // اگر یوزر نے خود 'Block' پر کلک کیا تو یہ ایرر آئے گا اور وہ سیٹ پر نہیں بیٹھ سکے گا
+        console.error("Browser Mic Permission Denied:", err);
+        Swal.fire({
+            icon: 'error', 
+            title: 'مائیک بلاک ہے!', 
+            text: 'براہ کرم براؤزر کی سیٹنگز یا اوپر لاک (Lock 🔒) آئیکن پر کلک کر کے مائیک کو Allow کریں۔', 
+            background: '#111', 
+            color: '#fff',
+            confirmButtonColor: '#dc2626'
+        });
+        return; // یہاں سے کوڈ رک جائے گا، یوزر سیٹ پر نہیں جائے گا
+    }
+    // ========================================================
     
-    // Step 1: فوری طور پر ڈیٹا بیس اپڈیٹ کریں تاکہ ڈی پی سیٹ پر آ جائے (Zero Lag)
+    // Step 1: Firebase میں فوراً ڈی پی لگائیں (کیونکہ پرمیشن مل چکی ہے)
     let unseatUpdates = {};['seat1','seat2','seat3','seat4','seat5','seat6','seat7','seat8','seat9','seat10'].forEach(k => {
         if (s[k] && s[k].uid === currentUser.uid) { unseatUpdates[k] = null; }
     });
@@ -5181,45 +5206,28 @@ window.sitDown = async (sid, def) => {
     const menuEl = document.getElementById(`menu-${sid}`);
     if (menuEl) menuEl.style.display = 'none';
 
-    // Step 2: بیک گراؤنڈ میں مائیکروفون آن کریں (بہتر ایرر ہینڈلنگ کے ساتھ)
+    // Step 2: Zego مائیک آن کرنا
     try {
         if (!zg) {
-            throw new Error("ZegoCloud Server is connecting... Please try again in 2 seconds.");
+            await window.listenForSignals(); // اگر زیکو ریڈی نہیں تو پہلے کنیکٹ کرو
         }
 
-        Swal.fire({toast: true, icon: 'info', title: 'Connecting Mic...', position: 'top', showConfirmButton: false, timer: 1500});
-        
-        // مائیک کی پرمیشن اور اسٹریم کریٹ کرنا
+        // اب چونکہ براؤزر کو پرمیشن مل چکی ہے، Zego بغیر کسی ایرر کے مائیک اٹھا لے گا
         localZegoStream = await zg.createStream({camera: false, mic: true});
         
-        // Stream ID کو کلین کیا گیا ہے تاکہ Zego اسے ریجیکٹ نہ کرے
-        publishedStreamId = "stream_" + currentUser.uid; 
-        
+        // یونیک سٹریم آئی ڈی تاکہ ایکو (Echo) نہ بنے
+        publishedStreamId = `stream_${currentUser.uid}_${currentRoomId}`; 
         await zg.startPublishingStream(publishedStreamId, localZegoStream);
-        console.log("🎙️ Mic Connected Fast!");
         
-        Swal.fire({toast: true, icon: 'success', title: 'Microphone is ON!', position: 'top', showConfirmButton: false, timer: 2000});
+        Swal.fire({toast: true, icon: 'success', title: '🎙️ You are Live!', position: 'bottom', showConfirmButton: false, timer: 1500, background: '#111', color: '#fff'});
 
     } catch (err) {
-        console.error("Mic/Zego Error:", err);
-        window.leaveSeat(sid); // ایرر آنے پر سیٹ سے واپس اتار دیں
-        
-        let errorMsg = 'Could not connect microphone.';
-        let errorIcon = 'error';
-
-        // اصل وجہ چیک کریں
-        if (err.name === 'NotAllowedError' || (err.message && err.message.toLowerCase().includes('permission'))) {
-            errorMsg = "Microphone blocked by browser! Please allow microphone permission.\n(Note: Voice chat requires HTTPS secure connection)";
-            errorIcon = 'warning';
-        } else if (err.message) {
-            errorMsg = "Server Error: " + err.message;
-        }
-
+        console.error("Zego Stream Error:", err);
+        window.leaveSeat(sid); // اگر سرور کا کوئی مسئلہ آیا تو سیٹ سے اتار دیں
         Swal.fire({
-            icon: errorIcon, 
-            title: 'Mic Failed', 
-            text: errorMsg, 
-            confirmButtonColor: '#dc2626',
+            icon: 'error', 
+            title: 'Server Error', 
+            text: 'Connection failed. Please try again.', 
             background: '#111', 
             color: '#fff'
         });
